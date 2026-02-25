@@ -1,0 +1,7 @@
+{
+  "episode_id": "gs://xembodiment_data/r2d2/r2d2-data-full/CLVR/success/2023-06-06/Tue_Jun__6_01:54:32_2023/trajectory.h5",
+  "instruction": "Put one bottle in the bowl",
+  "num_frames": 129,
+  "avg_score": 20.794469892516616,
+  "fps": 15
+}

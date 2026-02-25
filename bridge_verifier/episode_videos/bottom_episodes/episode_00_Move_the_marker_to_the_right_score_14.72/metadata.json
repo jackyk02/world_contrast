@@ -1,0 +1,7 @@
+{
+  "episode_id": "gs://xembodiment_data/r2d2/r2d2-data-full/IRIS/success/2023-04-13/Thu_Apr_13_15:12:56_2023/trajectory.h5",
+  "instruction": "Move the marker to the right",
+  "num_frames": 243,
+  "avg_score": 14.722613483790017,
+  "fps": 15
+}

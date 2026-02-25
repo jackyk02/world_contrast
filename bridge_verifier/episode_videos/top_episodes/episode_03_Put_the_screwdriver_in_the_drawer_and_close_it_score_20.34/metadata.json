@@ -1,0 +1,7 @@
+{
+  "episode_id": "gs://xembodiment_data/r2d2/r2d2-data-full/AUTOLab/success/2023-09-04/Mon_Sep__4_19:07:15_2023/trajectory.h5",
+  "instruction": "Put the screwdriver in the drawer and close it",
+  "num_frames": 138,
+  "avg_score": 20.336830664372098,
+  "fps": 15
+}

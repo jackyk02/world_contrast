@@ -1,0 +1,7 @@
+{
+  "episode_id": "gs://xembodiment_data/r2d2/r2d2-data-full/TRI/success/2023-11-02/Thu_Nov__2_10:54:33_2023/trajectory.h5",
+  "instruction": "Move the blue object backwards",
+  "num_frames": 239,
+  "avg_score": 13.97886471169763,
+  "fps": 15
+}

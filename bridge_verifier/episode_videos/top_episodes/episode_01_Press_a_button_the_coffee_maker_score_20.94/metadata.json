@@ -1,0 +1,7 @@
+{
+  "episode_id": "gs://xembodiment_data/r2d2/r2d2-data-full/REAL/success/2023-12-18/Mon_Dec_18_17:00:09_2023/trajectory.h5",
+  "instruction": "Press a button the coffee maker",
+  "num_frames": 133,
+  "avg_score": 20.937795538651315,
+  "fps": 15
+}

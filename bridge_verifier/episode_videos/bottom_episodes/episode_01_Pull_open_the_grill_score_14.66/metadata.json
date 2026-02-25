@@ -1,0 +1,7 @@
+{
+  "episode_id": "gs://xembodiment_data/r2d2/r2d2-data-full/ILIAD/success/2023-06-15/Thu_Jun_15_11:42:26_2023/trajectory.h5",
+  "instruction": "Pull open the grill",
+  "num_frames": 227,
+  "avg_score": 14.662117138833201,
+  "fps": 15
+}

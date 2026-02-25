@@ -1,0 +1,7 @@
+{
+  "episode_id": "gs://xembodiment_data/r2d2/r2d2-data-full/IRIS/success/2023-05-02/Tue_May__2_11:58:02_2023/trajectory.h5",
+  "instruction": "Move the white mug forward",
+  "num_frames": 189,
+  "avg_score": 14.408142165532189,
+  "fps": 15
+}
