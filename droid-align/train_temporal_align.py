@@ -95,8 +95,9 @@ class TemporalAligner(nn.Module):
         self.log_temp     = nn.Parameter(torch.tensor(2.6592))
 
     @property
-    def temperature(self) -> float:
-        return float(self.log_temp.exp().clamp(0.01, 100.0))
+    def temperature(self) -> torch.Tensor:
+        # Return as tensor so gradients flow back into log_temp
+        return self.log_temp.exp().clamp(0.01, 100.0)
 
     def forward(
         self,
@@ -277,7 +278,7 @@ def train(rank: int, world_size: int, args: argparse.Namespace):
             lr_now        = optimizer.param_groups[0]["lr"]
             print(
                 f"step={global_step:8d} | loss={avg_loss:.4f} | "
-                f"temp={temp:.4f} | lr={lr_now:.2e} | "
+                f"temp={temp.item():.4f} | lr={lr_now:.2e} | "
                 f"sim(lang,st)={avg_lang_st:.3f} | sim(lang,stk)={avg_lang_stk:.3f} | "
                 f"elapsed={elapsed/60:.1f}m"
             )
@@ -286,7 +287,7 @@ def train(rank: int, world_size: int, args: argparse.Namespace):
                 wandb.log(
                     {
                         "train/loss":        avg_loss,
-                        "train/temp":        temp,
+                        "train/temp":        temp.item(),
                         "train/lr":          lr_now,
                         "train/sim_lang_st": avg_lang_st,
                         "train/sim_lang_stk":avg_lang_stk,

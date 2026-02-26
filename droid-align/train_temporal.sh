@@ -28,14 +28,14 @@ CHECKPOINT_DIR="/root/vla-clip/droid-align/temporal_ckpts"
 # ---------------------------------------------------------------------------
 # Training config
 # ---------------------------------------------------------------------------
-NUM_GPUS=4
-BATCH_SIZE=512        # per-rank batch size
+NUM_GPUS=1
+BATCH_SIZE=1024       # per-rank batch size; 1/3 of full dataset (~256 shards)
 PROJ_DIM=512          # adapter output dimension
 K=8                   # temporal offset: use s_{t+8} as subgoal
 CAMERA="ext1"         # camera for s_t and s_{t+k}: ext1 | ext2 | wrist
-LR=3e-4
-WARMUP_STEPS=1000
-NUM_TRAIN_STEPS=200000
+LR=6e-4               # linear scaling: 3e-4 * (1024/512)
+WARMUP_STEPS=500
+NUM_TRAIN_STEPS=67000  # scaled for ~1/3 of full dataset
 SAVE_INTERVAL=5000
 LOG_FREQ=50
 AUX_LOSS_WEIGHT=0.5   # weight for the auxiliary (st-anchored) triangle loss
@@ -68,8 +68,7 @@ torchrun \
     --label_smoothing  0.1 \
     --grad_clip        1.0 \
     --port             "$PORT" \
-    ${RESUME:+--resume "$RESUME"} \
-    --use_wandb
+    ${RESUME:+--resume "$RESUME"}
 
 # =============================================================================
 # CLI Reference (all available flags):

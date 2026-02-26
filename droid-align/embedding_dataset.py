@@ -139,33 +139,40 @@ class MultiViewDataset(IterableDataset):
         buffer: list = []
 
         for shard_path in shards:
-            ds = tf.data.TFRecordDataset(shard_path)
-            for raw in ds:
-                traj = _decode_traj(raw.numpy())
-                if traj is None:
-                    continue
+            try:
+                ds = tf.data.TFRecordDataset(shard_path)
+                for raw in ds:
+                    traj = _decode_traj(raw.numpy())
+                    if traj is None:
+                        continue
 
-                # Check camera availability
-                if self.require_all_cameras and traj["cameras_avail"] != 0b111:
-                    continue
+                    # Check camera availability
+                    if self.require_all_cameras and traj["cameras_avail"] != 0b111:
+                        continue
 
-                T = traj["T"]
-                for t in range(T):
-                    e1 = traj["ext1"][t]   # [D] float16
-                    e2 = traj["ext2"][t]   # [D] float16
-                    ew = traj["wrist"][t]  # [D] float16
-                    buffer.append((e1, e2, ew))
+                    T = traj["T"]
+                    for t in range(T):
+                        e1 = traj["ext1"][t]   # [D] float16
+                        e2 = traj["ext2"][t]   # [D] float16
+                        ew = traj["wrist"][t]  # [D] float16
+                        buffer.append((e1, e2, ew))
 
-                    if len(buffer) >= self.shuffle_buffer:
-                        idx = random.randrange(len(buffer))
-                        item = buffer[idx]
-                        buffer[idx] = buffer[-1]
-                        buffer.pop()
-                        yield (
-                            _to_float32_tensor(item[0]),
-                            _to_float32_tensor(item[1]),
-                            _to_float32_tensor(item[2]),
-                        )
+                        if len(buffer) >= self.shuffle_buffer:
+                            idx = random.randrange(len(buffer))
+                            item = buffer[idx]
+                            buffer[idx] = buffer[-1]
+                            buffer.pop()
+                            yield (
+                                _to_float32_tensor(item[0]),
+                                _to_float32_tensor(item[1]),
+                                _to_float32_tensor(item[2]),
+                            )
+            except tf.errors.DataLossError:
+                print(f"[WARNING] Skipping corrupted shard (DataLossError): {shard_path}", flush=True)
+                continue
+            except Exception as exc:
+                # Convert non-picklable TF exceptions so PyTorch workers can re-raise them
+                raise RuntimeError(f"Error reading shard {shard_path}: {exc}") from None
 
         # Drain remaining buffer
         random.shuffle(buffer)
@@ -235,35 +242,41 @@ class TemporalDataset(IterableDataset):
         buffer: list = []
 
         for shard_path in shards:
-            ds = tf.data.TFRecordDataset(shard_path)
-            for raw in ds:
-                traj = _decode_traj(raw.numpy())
-                if traj is None:
-                    continue
+            try:
+                ds = tf.data.TFRecordDataset(shard_path)
+                for raw in ds:
+                    traj = _decode_traj(raw.numpy())
+                    if traj is None:
+                        continue
 
-                T    = traj["T"]
-                lang = traj["lang"]                    # [D] float16
-                imgs = traj[self.camera]               # [T, D] float16
+                    T    = traj["T"]
+                    lang = traj["lang"]                    # [D] float16
+                    imgs = traj[self.camera]               # [T, D] float16
 
-                # Only trajectories long enough for at least one (t, t+k) pair
-                if T <= self.k:
-                    continue
+                    # Only trajectories long enough for at least one (t, t+k) pair
+                    if T <= self.k:
+                        continue
 
-                for t in range(T - self.k):
-                    st   = imgs[t]          # [D] float16
-                    stk  = imgs[t + self.k] # [D] float16
-                    buffer.append((lang, st, stk))
+                    for t in range(T - self.k):
+                        st   = imgs[t]          # [D] float16
+                        stk  = imgs[t + self.k] # [D] float16
+                        buffer.append((lang, st, stk))
 
-                    if len(buffer) >= self.shuffle_buffer:
-                        idx = random.randrange(len(buffer))
-                        item = buffer[idx]
-                        buffer[idx] = buffer[-1]
-                        buffer.pop()
-                        yield (
-                            _to_float32_tensor(item[0]),
-                            _to_float32_tensor(item[1]),
-                            _to_float32_tensor(item[2]),
-                        )
+                        if len(buffer) >= self.shuffle_buffer:
+                            idx = random.randrange(len(buffer))
+                            item = buffer[idx]
+                            buffer[idx] = buffer[-1]
+                            buffer.pop()
+                            yield (
+                                _to_float32_tensor(item[0]),
+                                _to_float32_tensor(item[1]),
+                                _to_float32_tensor(item[2]),
+                            )
+            except tf.errors.DataLossError:
+                print(f"[WARNING] Skipping corrupted shard (DataLossError): {shard_path}", flush=True)
+                continue
+            except Exception as exc:
+                raise RuntimeError(f"Error reading shard {shard_path}: {exc}") from None
 
         # Drain remaining buffer
         random.shuffle(buffer)

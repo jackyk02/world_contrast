@@ -24,12 +24,12 @@ CHECKPOINT_DIR="/root/vla-clip/droid-align/multiview_ckpts"
 # ---------------------------------------------------------------------------
 # Training config
 # ---------------------------------------------------------------------------
-NUM_GPUS=4
-BATCH_SIZE=512        # per-rank batch size; effective = NUM_GPUS * BATCH_SIZE
+NUM_GPUS=1
+BATCH_SIZE=1024       # per-rank batch size; 1/3 of full dataset (~256 shards)
 PROJ_DIM=512          # adapter output dimension
-LR=3e-4
-WARMUP_STEPS=1000
-NUM_TRAIN_STEPS=200000
+LR=6e-4               # linear scaling: 3e-4 * (1024/512)
+WARMUP_STEPS=500
+NUM_TRAIN_STEPS=67000  # scaled for ~1/3 of full dataset
 SAVE_INTERVAL=5000
 LOG_FREQ=50
 PORT=12356
@@ -58,8 +58,7 @@ torchrun \
     --label_smoothing  0.1 \
     --grad_clip        1.0 \
     --port             "$PORT" \
-    ${RESUME:+--resume "$RESUME"} \
-    --use_wandb
+    ${RESUME:+--resume "$RESUME"}
 
 # =============================================================================
 # CLI Reference (all available flags):
