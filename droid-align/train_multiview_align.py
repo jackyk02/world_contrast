@@ -47,7 +47,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from triangle_loss import symmetric_triangle_loss, triangle_loss
+from triangle_loss import symmetric_triangle_loss, triangle_loss, area_computation
 from embedding_dataset import MultiViewDataset
 
 torch.set_num_threads(8)
@@ -135,6 +135,111 @@ def manage_checkpoints(ckpt_dir: str, save_name: str, max_keep: int):
 
 
 # ---------------------------------------------------------------------------
+# Validation helpers
+# ---------------------------------------------------------------------------
+@torch.no_grad()
+def _retrieval_acc(
+    anchor1: torch.Tensor,
+    anchor2: torch.Tensor,
+    candidates: torch.Tensor,
+) -> float:
+    """
+    Given paired (anchor1_i, anchor2_i), retrieve the correct candidates_i
+    from the full batch using triangle area as a similarity score.
+
+    The triangle formed by (anchor1_i, anchor2_i, candidates_j) has the
+    smallest area when j == i (matched triplet), so argmin over j gives
+    the predicted index.
+
+    Args:
+        anchor1, anchor2: [N, D]  two fixed camera views (L2-normalised)
+        candidates:       [N, D]  pool of third-view embeddings to rank
+
+    Returns:
+        Top-1 retrieval accuracy in [0, 1].
+    """
+    N = anchor1.shape[0]
+
+    # Fixed edge vector: u_i = anchor1_i - anchor2_i
+    u = anchor1 - anchor2                              # [N, D]
+    u_norm_sq = (u * u).sum(dim=1, keepdim=True)       # [N, 1]
+
+    # Varying edge: v_{i,j} = anchor1_i - candidates_j
+    v = anchor1.unsqueeze(1) - candidates.unsqueeze(0) # [N, N, D]
+    v_norm_sq = (v * v).sum(dim=2)                     # [N, N]
+    uv_dot    = (u.unsqueeze(1) * v).sum(dim=2)        # [N, N]
+
+    # Squared area (omit /2 – preserves ordering)
+    area = u_norm_sq * v_norm_sq - uv_dot ** 2         # [N, N]
+
+    preds  = area.argmin(dim=1)                        # [N]
+    labels = torch.arange(N, device=anchor1.device)
+    return float((preds == labels).float().mean().item())
+
+
+@torch.no_grad()
+def compute_val_metrics(
+    model: nn.Module,
+    val_loader_iter,
+    val_batches: int,
+    device: torch.device,
+    label_smoothing: float,
+) -> dict:
+    """
+    Run validation for up to *val_batches* mini-batches and return:
+      val/loss       – symmetric triangle loss
+      val/acc_01to2  – (cam0+cam1) → cam2  retrieval top-1
+      val/acc_02to1  – (cam0+cam2) → cam1  retrieval top-1
+      val/acc_12to0  – (cam1+cam2) → cam0  retrieval top-1
+    """
+    raw_model = model.module if hasattr(model, "module") else model
+    model.eval()
+
+    val_loss_sum  = 0.0
+    acc_01to2_sum = 0.0
+    acc_02to1_sum = 0.0
+    acc_12to0_sum = 0.0
+    n_batches     = 0
+
+    for _ in range(val_batches):
+        try:
+            ext1_emb, ext2_emb, wrist_emb = next(val_loader_iter)
+        except StopIteration:
+            break
+
+        ext1_emb  = ext1_emb.to(device)
+        ext2_emb  = ext2_emb.to(device)
+        wrist_emb = wrist_emb.to(device)
+
+        z1, z2, zw = model(ext1_emb, ext2_emb, wrist_emb)
+        temp = raw_model.temperature
+
+        val_loss_sum  += float(symmetric_triangle_loss(
+            z1, z2, zw,
+            temperature=temp,
+            label_smoothing=label_smoothing,
+        ).item())
+
+        acc_01to2_sum += _retrieval_acc(z1, z2, zw)  # (cam0+cam1) → cam2
+        acc_02to1_sum += _retrieval_acc(z1, zw, z2)  # (cam0+cam2) → cam1
+        acc_12to0_sum += _retrieval_acc(z2, zw, z1)  # (cam1+cam2) → cam0
+
+        n_batches += 1
+
+    model.train()
+
+    if n_batches == 0:
+        return {}
+
+    return {
+        "val/loss":      val_loss_sum  / n_batches,
+        "val/acc_01to2": acc_01to2_sum / n_batches,
+        "val/acc_02to1": acc_02to1_sum / n_batches,
+        "val/acc_12to0": acc_12to0_sum / n_batches,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Training
 # ---------------------------------------------------------------------------
 def train(rank: int, world_size: int, args: argparse.Namespace):
@@ -152,6 +257,8 @@ def train(rank: int, world_size: int, args: argparse.Namespace):
         require_all_cameras=True,
         rank=rank,
         world_size=world_size,
+        shard_start=args.shard_start,
+        shard_end=args.shard_end if args.shard_end >= 0 else None,
     )
     loader = DataLoader(
         dataset,
@@ -161,6 +268,42 @@ def train(rank: int, world_size: int, args: argparse.Namespace):
         drop_last=True,
         prefetch_factor=2 if args.num_workers > 0 else None,
     )
+
+    # ---- Validation dataset (single shard or [0, shard_start)) ----
+    val_loader_iter = None
+    val_loader      = None
+    if args.val_interval > 0:
+        if args.val_shard_start >= 0 and args.val_shard_end >= 0:
+            val_start, val_end = args.val_shard_start, args.val_shard_end
+        elif args.shard_start > 0:
+            val_start, val_end = 0, args.shard_start
+        else:
+            val_start = val_end = 0
+        if val_end > val_start:
+            val_dataset = MultiViewDataset(
+                embedding_dir=args.embedding_dir,
+                shuffle_shards=True,
+                shuffle_buffer=min(args.shuffle_buffer, 4096),
+                require_all_cameras=True,
+                rank=rank,
+                world_size=world_size,
+                shard_start=val_start,
+                shard_end=val_end,
+            )
+            # Single-shard val: use 0 workers to avoid TF pthread issues in subprocesses
+            val_num_workers = 0 if (val_end - val_start) == 1 else max(1, args.num_workers // 2)
+            val_loader = DataLoader(
+                val_dataset,
+                batch_size=args.batch_size,
+                num_workers=val_num_workers,
+                pin_memory=True,
+                drop_last=True,
+                prefetch_factor=2 if val_num_workers > 0 else None,
+            )
+            val_loader_iter = iter(val_loader)
+            if rank == 0:
+                print(f"Validation dataset: shards [{val_start}, {val_end}), "
+                      f"val_interval={args.val_interval}, val_batches={args.val_batches}")
 
     # ---- Model ----
     model = MultiViewAligner(input_dim=args.embed_dim, proj_dim=args.proj_dim).to(device)
@@ -276,6 +419,39 @@ def train(rank: int, world_size: int, args: argparse.Namespace):
             print(f"Saved checkpoint: {ckpt_path}")
             manage_checkpoints(args.checkpoint_dir, args.save_name, args.max_checkpoints)
 
+        # ---- Validation ----
+        if (
+            args.val_interval > 0
+            and global_step % args.val_interval == 0
+            and rank == 0
+            and val_loader_iter is not None
+        ):
+            val_metrics = compute_val_metrics(
+                model,
+                val_loader_iter,
+                args.val_batches,
+                device,
+                args.label_smoothing,
+            )
+            if not val_metrics:
+                # Iterator was exhausted; reset and retry once
+                val_loader_iter = iter(val_loader)
+                val_metrics = compute_val_metrics(
+                    model, val_loader_iter, args.val_batches,
+                    device, args.label_smoothing,
+                )
+            if val_metrics:
+                print(
+                    f"[VAL] step={global_step:8d} | "
+                    f"loss={val_metrics['val/loss']:.4f} | "
+                    f"acc (cam0+cam1)→cam2={val_metrics['val/acc_01to2']*100:.1f}% | "
+                    f"acc (cam0+cam2)→cam1={val_metrics['val/acc_02to1']*100:.1f}% | "
+                    f"acc (cam1+cam2)→cam0={val_metrics['val/acc_12to0']*100:.1f}%"
+                )
+                if args.use_wandb:
+                    import wandb
+                    wandb.log(val_metrics, step=global_step)
+
         if global_step % 100 == 0:
             gc.collect()
             torch.cuda.empty_cache()
@@ -299,6 +475,8 @@ def main():
     parser.add_argument("--embed_dim",       type=int, default=1024, help="SigLIP2 embedding dim")
     parser.add_argument("--shuffle_buffer",  type=int, default=8192, help="Shuffle buffer size")
     parser.add_argument("--num_workers",     type=int, default=4,    help="DataLoader workers")
+    parser.add_argument("--shard_start",     type=int, default=0,    help="First shard index (inclusive)")
+    parser.add_argument("--shard_end",       type=int, default=-1,   help="Last shard index (exclusive); -1 = all")
 
     # Model
     parser.add_argument("--proj_dim",        type=int, default=512,  help="Adapter projection dim")
@@ -315,6 +493,16 @@ def main():
     # Logging
     parser.add_argument("--log_freq",        type=int, default=50)
     parser.add_argument("--use_wandb",       action="store_true")
+
+    # Validation
+    parser.add_argument("--val_interval",    type=int, default=1000,
+                        help="Run validation every N steps (0 = disabled)")
+    parser.add_argument("--val_batches",     type=int, default=50,
+                        help="Number of mini-batches to use for each validation run")
+    parser.add_argument("--val_shard_start", type=int, default=-1,
+                        help="First shard index for validation (inclusive). If >= 0, val uses [val_shard_start, val_shard_end)")
+    parser.add_argument("--val_shard_end",   type=int, default=-1,
+                        help="Last shard index for validation (exclusive). If >= 0, val uses [val_shard_start, val_shard_end)")
 
     # Checkpointing
     parser.add_argument("--checkpoint_dir",  default="multiview_ckpts")

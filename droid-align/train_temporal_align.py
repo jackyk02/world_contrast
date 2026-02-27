@@ -155,6 +155,8 @@ def train(rank: int, world_size: int, args: argparse.Namespace):
         shuffle_buffer=args.shuffle_buffer,
         rank=rank,
         world_size=world_size,
+        shard_start=args.shard_start,
+        shard_end=args.shard_end if args.shard_end >= 0 else None,
     )
     loader = DataLoader(
         dataset,
@@ -341,6 +343,8 @@ def main():
                         help="Which camera embedding to use for s_t and s_{t+k}")
     parser.add_argument("--shuffle_buffer",   type=int, default=8192)
     parser.add_argument("--num_workers",      type=int, default=4)
+    parser.add_argument("--shard_start",      type=int, default=0,    help="First shard index (inclusive)")
+    parser.add_argument("--shard_end",        type=int, default=-1,   help="Last shard index (exclusive); -1 = all")
 
     # Model
     parser.add_argument("--proj_dim",         type=int, default=512)

@@ -67,6 +67,8 @@ torchrun \
     --max_checkpoints  20 \
     --label_smoothing  0.1 \
     --grad_clip        1.0 \
+    --shard_start      100 \
+    --shard_end        256 \
     --port             "$PORT" \
     ${RESUME:+--resume "$RESUME"}
 

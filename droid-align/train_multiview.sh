@@ -27,11 +27,15 @@ CHECKPOINT_DIR="/root/vla-clip/droid-align/multiview_ckpts"
 NUM_GPUS=1
 BATCH_SIZE=1024       # per-rank batch size; 1/3 of full dataset (~256 shards)
 PROJ_DIM=512          # adapter output dimension
-LR=6e-4               # linear scaling: 3e-4 * (1024/512)
+LR=6e-3               # linear scaling: 3e-4 * (1024/512)
 WARMUP_STEPS=500
-NUM_TRAIN_STEPS=67000  # scaled for ~1/3 of full dataset
-SAVE_INTERVAL=5000
+NUM_TRAIN_STEPS=10000  # scaled for ~1/3 of full dataset
+SAVE_INTERVAL=2500
 LOG_FREQ=50
+VAL_INTERVAL=1000   # validate every N steps (0 = disabled)
+VAL_BATCHES=50      # mini-batches per validation run
+VAL_SHARD_START=100 # validation uses single shard 100
+VAL_SHARD_END=101
 PORT=12356
 
 # Optional: resume from checkpoint
@@ -52,12 +56,19 @@ torchrun \
     --num_train_steps  "$NUM_TRAIN_STEPS" \
     --save_interval    "$SAVE_INTERVAL" \
     --log_freq         "$LOG_FREQ" \
-    --shuffle_buffer   8192 \
+    --val_interval     "$VAL_INTERVAL" \
+    --val_batches      "$VAL_BATCHES" \
+    --val_shard_start  "$VAL_SHARD_START" \
+    --val_shard_end    "$VAL_SHARD_END" \
+    --shuffle_buffer   20000 \
     --num_workers      4 \
     --max_checkpoints  20 \
     --label_smoothing  0.1 \
     --grad_clip        1.0 \
+    --shard_start      101 \
+    --shard_end        256 \
     --port             "$PORT" \
+    --use_wandb \
     ${RESUME:+--resume "$RESUME"}
 
 # =============================================================================
@@ -85,6 +96,8 @@ torchrun \
 # Logging:
 #   --log_freq N            Log every N steps (default: 50)
 #   --use_wandb             Enable Weights & Biases logging
+#   --val_interval N        Validate every N steps; 0 = disabled (default: 1000)
+#   --val_batches N         Mini-batches per validation run (default: 50)
 #
 # Checkpointing:
 #   --checkpoint_dir PATH   Checkpoint output directory

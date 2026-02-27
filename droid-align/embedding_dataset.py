@@ -17,7 +17,7 @@ from __future__ import annotations
 import glob
 import os
 import random
-from typing import Iterator, Tuple
+from typing import Iterator, Optional, Tuple
 
 import numpy as np
 import torch
@@ -113,6 +113,8 @@ class MultiViewDataset(IterableDataset):
         require_all_cameras: bool = True,
         rank: int = 0,
         world_size: int = 1,
+        shard_start: int = 0,
+        shard_end: Optional[int] = None,
     ):
         super().__init__()
         self.embedding_dir       = embedding_dir
@@ -125,6 +127,10 @@ class MultiViewDataset(IterableDataset):
         all_shards = sorted(glob.glob(os.path.join(embedding_dir, "*.tfrecord")))
         if not all_shards:
             raise FileNotFoundError(f"No .tfrecord files in {embedding_dir}")
+
+        all_shards = all_shards[shard_start:shard_end]
+        if not all_shards:
+            raise ValueError(f"No shards in range [{shard_start}:{shard_end}] in {embedding_dir}")
 
         # DDP: each rank gets a disjoint subset of shards
         self.shards = [s for i, s in enumerate(all_shards) if i % world_size == rank]
@@ -213,6 +219,8 @@ class TemporalDataset(IterableDataset):
         shuffle_buffer: int = 4096,
         rank: int = 0,
         world_size: int = 1,
+        shard_start: int = 0,
+        shard_end: Optional[int] = None,
     ):
         super().__init__()
         assert camera in ("ext1", "ext2", "wrist"), \
@@ -229,6 +237,10 @@ class TemporalDataset(IterableDataset):
         all_shards = sorted(glob.glob(os.path.join(embedding_dir, "*.tfrecord")))
         if not all_shards:
             raise FileNotFoundError(f"No .tfrecord files in {embedding_dir}")
+
+        all_shards = all_shards[shard_start:shard_end]
+        if not all_shards:
+            raise ValueError(f"No shards in range [{shard_start}:{shard_end}] in {embedding_dir}")
 
         self.shards = [s for i, s in enumerate(all_shards) if i % world_size == rank]
         if not self.shards:
