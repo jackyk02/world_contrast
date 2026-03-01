@@ -552,6 +552,11 @@ def main():
     parser.add_argument("--device",              default="cuda")
     parser.add_argument("--start_shard",         type=int, default=0)
     parser.add_argument("--split",               default="train")
+    parser.add_argument("--demonstrations_only", action="store_true", default=True,
+                        help="Only process episodes with is_terminal=True on the last step "
+                             "(DROID 'demonstration' trajectories). Train split has ~95.6k episodes "
+                             "but only ~76k are demonstrations; set to false to process all.")
+    parser.add_argument("--no_demonstrations_only", action="store_false", dest="demonstrations_only")
     parser.add_argument("--num_parallel_reads",  type=int, default=16,
                         help="Concurrent RLDS TFRecord shard readers (disk I/O parallelism).")
     parser.add_argument("--prefetch",            type=int, default=32,
@@ -582,6 +587,11 @@ def main():
         f"Writing to {args.output_dir} | {args.num_shards} shards | "
         f"cross-traj batch_size={args.batch_size}"
     )
+    if args.demonstrations_only:
+        logger.info(
+            "Filtering to demonstration episodes only (is_terminal=True on last step); "
+            "train split has ~95.6k episodes, ~76k are demonstrations."
+        )
 
     # Buffer that accumulates frames across trajectories
     buf = CrossTrajectoryBuffer(max_batch_size=args.batch_size, device=device)
@@ -609,6 +619,14 @@ def main():
     )
 
     for episode in tqdm(ds_iter, desc="Trajectories", unit="traj"):
+        # Optionally skip non-demonstration episodes (train split has ~95.6k, only ~76k are demos)
+        if args.demonstrations_only:
+            term = episode.get("is_terminal")
+            if term is None or not bool(np.asarray(term).flat[-1]):
+                skip_count += 1
+                traj_count += 1
+                continue
+
         shard_idx = traj_count % args.num_shards
 
         if shard_idx < args.start_shard:

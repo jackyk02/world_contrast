@@ -191,6 +191,100 @@ class MultiViewDataset(IterableDataset):
 
 
 # ---------------------------------------------------------------------------
+# Multi-view dataset with language (for FiLM conditioning)
+# ---------------------------------------------------------------------------
+class MultiViewWithLangDataset(IterableDataset):
+    """
+    Same as MultiViewDataset but also yields the trajectory language embedding
+    (ext1_emb, ext2_emb, wrist_emb, lang_emb) for each timestep.
+    Used for multi-view + FiLM (language-conditioned) alignment training.
+    """
+
+    def __init__(
+        self,
+        embedding_dir: str,
+        shuffle_shards: bool = True,
+        shuffle_buffer: int = 4096,
+        require_all_cameras: bool = True,
+        rank: int = 0,
+        world_size: int = 1,
+        shard_start: int = 0,
+        shard_end: Optional[int] = None,
+    ):
+        super().__init__()
+        self.embedding_dir       = embedding_dir
+        self.shuffle_shards      = shuffle_shards
+        self.shuffle_buffer      = shuffle_buffer
+        self.require_all_cameras = require_all_cameras
+        self.rank                = rank
+        self.world_size          = world_size
+
+        all_shards = sorted(glob.glob(os.path.join(embedding_dir, "*.tfrecord")))
+        if not all_shards:
+            raise FileNotFoundError(f"No .tfrecord files in {embedding_dir}")
+
+        all_shards = all_shards[shard_start:shard_end]
+        if not all_shards:
+            raise ValueError(f"No shards in range [{shard_start}:{shard_end}] in {embedding_dir}")
+
+        self.shards = [s for i, s in enumerate(all_shards) if i % world_size == rank]
+        if not self.shards:
+            raise ValueError(f"No shards for rank={rank}, world_size={world_size}")
+
+    def __iter__(self) -> Iterator[Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]]:
+        shards = list(self.shards)
+        if self.shuffle_shards:
+            random.shuffle(shards)
+
+        buffer: list = []
+
+        for shard_path in shards:
+            try:
+                ds = tf.data.TFRecordDataset(shard_path)
+                for raw in ds:
+                    traj = _decode_traj(raw.numpy())
+                    if traj is None:
+                        continue
+
+                    if self.require_all_cameras and traj["cameras_avail"] != 0b111:
+                        continue
+
+                    T = traj["T"]
+                    lang = traj["lang"]  # [D] float16
+                    for t in range(T):
+                        e1 = traj["ext1"][t]
+                        e2 = traj["ext2"][t]
+                        ew = traj["wrist"][t]
+                        buffer.append((e1, e2, ew, lang))
+
+                        if len(buffer) >= self.shuffle_buffer:
+                            idx = random.randrange(len(buffer))
+                            item = buffer[idx]
+                            buffer[idx] = buffer[-1]
+                            buffer.pop()
+                            yield (
+                                _to_float32_tensor(item[0]),
+                                _to_float32_tensor(item[1]),
+                                _to_float32_tensor(item[2]),
+                                _to_float32_tensor(item[3]),
+                            )
+            except tf.errors.DataLossError:
+                print(f"[WARNING] Skipping corrupted shard (DataLossError): {shard_path}", flush=True)
+                continue
+            except Exception as exc:
+                raise RuntimeError(f"Error reading shard {shard_path}: {exc}") from None
+
+        random.shuffle(buffer)
+        for item in buffer:
+            yield (
+                _to_float32_tensor(item[0]),
+                _to_float32_tensor(item[1]),
+                _to_float32_tensor(item[2]),
+                _to_float32_tensor(item[3]),
+            )
+
+
+# ---------------------------------------------------------------------------
 # Temporal dataset
 # ---------------------------------------------------------------------------
 class TemporalDataset(IterableDataset):

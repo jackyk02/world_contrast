@@ -26,11 +26,11 @@ CHECKPOINT_DIR="/root/vla-clip/droid-align/multiview_ckpts"
 # ---------------------------------------------------------------------------
 NUM_GPUS=1
 BATCH_SIZE=1024       # per-rank batch size; 1/3 of full dataset (~256 shards)
-PROJ_DIM=1024          # adapter output dimension
+PROJ_DIM=2048          # adapter output dimension
 LR=6e-3               # linear scaling: 3e-4 * (1024/512)
-WARMUP_STEPS=500
-NUM_TRAIN_STEPS=10000 # train longer if loss plateaus ~2.77 (was 10000)
-SAVE_INTERVAL=2500
+WARMUP_STEPS=2000
+NUM_TRAIN_STEPS=640000 # train longer if loss plateaus ~2.77 (was 10000)
+SAVE_INTERVAL=5000
 LOG_FREQ=50
 VAL_INTERVAL=500   # validate every N steps (0 = disabled)
 VAL_BATCHES=50      # mini-batches per validation run
@@ -43,7 +43,8 @@ PORT=12356
 
 # Optional: resume from checkpoint
 RESUME=""
-# RESUME="$CHECKPOINT_DIR/droid_multiview_align_step_10000.pt"
+# RESUME="/root/vla-clip/droid-align/multiview_ckpts/droid_multiview_align_step_17500.pt"
+# RESUME="/root/vla-clip/droid-align/multiview_ckpts/droid_multiview_align_step_35000.pt"
 
 torchrun \
     --standalone \
@@ -63,8 +64,8 @@ torchrun \
     --val_batches      "$VAL_BATCHES" \
     --val_shard_start  "$VAL_SHARD_START" \
     --val_shard_end    "$VAL_SHARD_END" \
-    --shuffle_buffer   20000 \
-    --num_workers      4 \
+    --shuffle_buffer   40000 \
+    --num_workers      8 \
     --max_checkpoints  20 \
     --label_smoothing  "$LABEL_SMOOTHING" \
     --grad_clip        "$GRAD_CLIP" \
